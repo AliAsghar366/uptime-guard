@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1788185317131,
+      "tag": "0000_dry_molly_hayes",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1788185317132,
+      "tag": "0001_append_only_triggers",
+      "breakpoints": true
+    }
+  ]
+}

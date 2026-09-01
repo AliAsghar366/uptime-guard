@@ -36,6 +36,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# locally-stored reference/check-off photos (see src/lib/storage/local.ts) -- needs a real
+# persistent volume once deployed, not committed to git
+/uploads/*
+!/uploads/.gitkeep
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
