@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  # Next.js App Router / Server Actions / API routes are handled by Netlify's official Next.js
+  # runtime, auto-detected from this build command -- no publish dir override needed.
+
+[functions]
+  # Scheduled Functions (netlify/functions/alert-sweep.mts) live alongside the Next.js app but
+  # build separately -- point Netlify at that directory explicitly.
+  directory = "netlify/functions"
