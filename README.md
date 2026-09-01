@@ -5,11 +5,12 @@ DF Unit Weekly Lubrication Schedule" sheets used on the corrugator line (B Flute
 Double Facer units) into a proper role-based web application with scheduling, alerting, and a
 permanent audit trail.
 
-## Status: running locally, not yet deployed
+## Status: running on Supabase, ready to deploy
 
-The application runs against a local MySQL database with the full schema, auth, and business
-logic in place. See [Running locally](#7-running-locally) below to get it going on a fresh
-machine, or [Deploying](#8-deploying) for what changes once you take it off this machine.
+The application runs against a hosted Supabase Postgres database and Supabase Storage, with the
+full schema, auth, and business logic in place. See [Running locally](#7-running-locally) below
+to get it going on a fresh machine, or [Deploying](#8-deploying) for what's needed to take it
+live.
 
 ---
 
@@ -19,15 +20,16 @@ machine, or [Deploying](#8-deploying) for what changes once you take it off this
 |---|---|
 | Framework | Next.js 16 (App Router, TypeScript, Turbopack) |
 | Styling | Tailwind CSS v4, custom glassmorphism design system |
-| Database | MySQL 8.4, accessed via Drizzle ORM (`drizzle-orm` + `mysql2`) |
-| Auth | Custom: bcrypt password hashing + opaque session tokens in an httpOnly cookie, backed by a `sessions` table |
-| File storage | Local disk (`uploads/`), served through an authenticated Next.js route |
+| Database | Postgres, hosted on Supabase, accessed via Drizzle ORM (`drizzle-orm` + `postgres`) through Supabase's connection pooler |
+| Auth | Custom: bcrypt password hashing + opaque session tokens in an httpOnly cookie, backed by a `sessions` table -- not Supabase Auth |
+| File storage | Supabase Storage (two private buckets: `reference-photos`, `task-photos`), served through an authenticated Next.js route |
 | Charts | Recharts |
 | Reports | jsPDF (PDF export), native CSV |
-| Hosting (planned) | Local machine for now; not yet deployed |
+| Hosting (planned) | Vercel -- `vercel.json` configures the alert-sweep cron; see [Deploying](#8-deploying) |
 
-Project lives at `D:\uptime-guard`. MySQL server lives at `D:\MySQL` (installed outside
-`Program Files`/`C:` on purpose — see [Running locally](#7-running-locally)).
+Project lives at `D:\uptime-guard`. Originally built against local MySQL + local disk storage,
+then migrated to Supabase (Postgres + Storage) -- see `db/migrations/supabase/` for the
+Postgres-flavored schema and append-only triggers.
 
 ## 2. Role hierarchy
 
@@ -41,11 +43,14 @@ Production Engineer, Lead Operator, Operator crew):
 | **Admin / Lead Operator** | Majid, Ashfaq, Riaz (Verified by) | Scoped to whichever unit(s) they're assigned to; manages tasks/sections/lubricants and Operator accounts within that scope |
 | **Operator** | The named crew per unit (e.g. BF: Sharjeel, Wajid, Arif) | Scoped to assigned unit(s); can only mark a task's status |
 
-Every account is individual and named — no shared logins. This used to be a database-level
-guarantee (Postgres Row-Level Security); MySQL has no RLS equivalent, so the full permission
-matrix now lives in application code at `src/lib/auth/authorize.ts`, applied explicitly by every
-server action and data-fetching function (never assumed). See that file for the exact rule set —
-it's a line-by-line port of the old RLS policies.
+Every account is individual and named — no shared logins. This was originally a database-level
+guarantee via Postgres Row-Level Security. It's back on Postgres now (Supabase), but RLS still
+isn't used: the app authenticates its own users with custom session cookies rather than Supabase
+Auth, so there's no `auth.uid()` for RLS policies to key off -- the app's DB connection uses the
+`postgres` role (the table owner, which bypasses RLS by default regardless), and Storage access
+separately uses the `service_role` key for the same reason. The full permission matrix instead
+lives in application code at `src/lib/auth/authorize.ts`, applied explicitly by every server
+action and data-fetching function (never assumed) — see that file for the exact rule set.
 
 ## 3. Data model
 
@@ -69,12 +74,11 @@ lubricants (shared reference list: Gadus S2 V220, Gleitmo 591, extensible)
 **Nothing is ever hard-deleted.** Units/sections/tasks use `archived_at` (soft delete).
 `task_status_events`, `event_annotations`, `alerts`, and `activity_log` are append-only —
 corrections happen by inserting a new event, not editing history. This was a specific,
-deliberate request: status changes must be permanently recorded and un-deletable. Under
-Postgres this was enforced by simply not granting an UPDATE/DELETE RLS policy to anyone; MySQL
-has no RLS, so it's enforced two ways now: the service layer never exposes an update/delete path
-for these tables, **and** `db/migrations/0001_append_only_triggers.sql` installs `BEFORE
-UPDATE`/`BEFORE DELETE` triggers that hard-reject any attempt at the database level, even from a
-direct SQL client logged in as the app user.
+deliberate request: status changes must be permanently recorded and un-deletable. It's enforced
+two ways: the service layer never exposes an update/delete path for these tables, **and**
+`db/migrations/supabase/0001_append_only_triggers.sql` installs `BEFORE UPDATE`/`BEFORE DELETE`
+PL/pgSQL triggers that hard-reject any attempt at the database level, even from a direct SQL
+client connected as the `postgres` role.
 
 ## 4. Features built
 
@@ -124,13 +128,13 @@ Mapped against the checklist this project was specifically built against:
 
 | Concern | How it's handled |
 |---|---|
-| Hardcoded secrets / secrets in JS | None in code; all via env vars (`DATABASE_URL`, `SESSION_SECRET`, `CRON_SECRET`) |
+| Hardcoded secrets / secrets in JS | None in code; all via env vars (`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SESSION_SECRET`, `CRON_SECRET`) |
 | Public `.env` / secrets in git | `.env*` gitignored from the start |
 | Weak auth | bcrypt password hashing (12 rounds), 8-char minimum enforced |
-| Missing auth checks / unprotected admin routes | Every admin-tier page re-checks the role server-side and redirects; every server action re-derives the caller from the session and applies `src/lib/auth/authorize.ts` explicitly (no implicit RLS to fall back on) |
+| Missing auth checks / unprotected admin routes | Every admin-tier page re-checks the role server-side and redirects; every server action re-derives the caller from the session and applies `src/lib/auth/authorize.ts` explicitly (no RLS to fall back on -- see §2) |
 | Cross-user / cross-unit access | Enforced in the application's authorization layer, applied consistently across every data-fetching function and mutation — see `src/lib/auth/authorize.ts` |
-| Open DB permissions | The app connects as a dedicated MySQL user (`uptime_guard`) with privileges scoped to the `uptime_guard` database only, not root |
-| Cloud service misconfiguration | N/A currently — file storage is local disk behind an authenticated route (`src/app/api/files/...`), not a public bucket |
+| Open DB permissions | The app connects to Supabase Postgres over the connection pooler with a project-specific password, not a shared/public credential |
+| Cloud service misconfiguration | Both Storage buckets (`reference-photos`, `task-photos`) are private, not public; reads and writes go through the `service_role` key from trusted server code only, gated by `src/app/api/files/...`'s own session + unit-scope check -- never a public bucket URL |
 | Login leaking info | Generic "Invalid username or password" regardless of which part was wrong |
 | Verbose prod errors | Server actions return generic messages, never raw DB error text |
 | Input validation | Username pattern-restricted, comment/name length caps, photo type/size validated server-side (not just the HTML `accept` hint), filenames sanitized against path injection |
@@ -140,16 +144,18 @@ Mapped against the checklist this project was specifically built against:
 ## 6. Project structure
 
 ```
-db/migrations/          Drizzle-generated MySQL migrations + hand-written append-only triggers
+db/migrations/supabase/   Hand-written Postgres schema + append-only triggers (0000/0001), plus
+                           anything drizzle-kit generate adds after this point
+db/migrations/             Original MySQL migrations, kept for history -- no longer applied
 db/seed/                units/sections/lubricants seed, reviewed task import, first super-admin account
-scripts/run-migrations.ts  Applies db/migrations/ to DATABASE_URL
-src/lib/db/schema.ts    Drizzle schema -- source of truth for the database
-src/lib/db/client.ts    mysql2 pool + Drizzle instance
+scripts/run-migrations.ts  Applies db/migrations/supabase/ to DATABASE_URL via drizzle-kit's migrator
+src/lib/db/schema.ts    Drizzle schema (pg-core) -- source of truth for the database
+src/lib/db/client.ts    postgres.js client (via Supabase's connection pooler) + Drizzle instance
 src/lib/auth/           Session issuance/verification, current-profile lookup, authorization helpers (the RLS replacement)
 src/lib/services/       Business logic that used to live in Postgres triggers/functions (status-event recording, alert sweep, activity log)
-src/lib/storage/local.ts  Local-disk file storage helpers
-src/app/api/files/      Authenticated route that serves uploaded photos (replaces Supabase Storage signed URLs)
-src/app/api/cron/       Alert-sweep endpoint, meant to be hit on a schedule (replaces pg_cron)
+src/lib/storage/supabase.ts  Supabase Storage helpers (service_role client, upload/download)
+src/app/api/files/      Authenticated route that serves photos from Supabase Storage
+src/app/api/cron/       Alert-sweep endpoint (GET + POST), meant to be hit on a schedule -- vercel.json wires up GET hourly on Vercel
 src/app/actions/        Server actions (auth, tasks, machines, accounts, settings)
 src/app/dashboard/      All authenticated screens (tasks, alerts, machines, accounts, analytics, activity, reports, settings)
 src/lib/data/           Server-side data-fetching helpers per screen
@@ -157,58 +163,59 @@ src/lib/data/           Server-side data-fetching helpers per screen
 
 ## 7. Running locally
 
-MySQL is installed at `D:\MySQL` (not under `Program Files`/`C:` — this machine's `C:` drive was
-full at setup time). To bring it up on a fresh checkout:
+The database and file storage are hosted on Supabase — nothing to install locally beyond Node.
+To bring it up on a fresh checkout:
 
-1. Install MySQL 8.4+ somewhere with room (the zip/no-install distribution works fine, doesn't
-   require admin rights the way the MSI installer does).
-2. Point a `my.ini` at your chosen `datadir`, initialize it
-   (`mysqld --initialize-insecure --defaults-file=...`), and start `mysqld` in the background.
-   For a single local dev instance with no replication, add `skip-log-bin` to `my.ini` --
-   otherwise `CREATE TRIGGER` fails for any DB user without the global `SUPER` privilege (see
-   `db/migrations/0001_append_only_triggers.sql`).
-3. Create the database and a dedicated app user (don't use `root` for the app itself):
-   ```sql
-   CREATE DATABASE uptime_guard CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
-   CREATE USER 'uptime_guard'@'localhost' IDENTIFIED BY '<a real password>';
-   GRANT ALL PRIVILEGES ON uptime_guard.* TO 'uptime_guard'@'localhost';
-   ```
-4. Copy `.env.local.example` to `.env.local` and fill in `DATABASE_URL` (using the user/password
-   above), `SESSION_SECRET`, and `CRON_SECRET` (random 32-byte hex values --
-   `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`).
+1. Create a Supabase project (or use an existing one).
+2. In the SQL Editor, run `db/migrations/supabase/0000_schema.sql`, then
+   `db/migrations/supabase/0001_append_only_triggers.sql` (order matters — the triggers
+   reference tables the first file creates).
+3. Create two **private** Storage buckets: `reference-photos` and `task-photos` (Storage ->
+   New bucket -> leave "Public bucket" off).
+4. Copy `.env.local.example` to `.env.local` and fill in:
+   - `DATABASE_URL` — the **connection pooling** string from Project Settings -> Database (not
+     the direct `db.<ref>.supabase.co` host — that one resolves IPv6-only and will fail to
+     connect on networks without an outbound IPv6 route). Format:
+     `postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`
+   - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — from Project Settings -> API.
+   - `SESSION_SECRET` and `CRON_SECRET` — random 32-byte hex values, e.g.
+     `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 5. `npm install`
-6. `npm run db:migrate` -- applies everything in `db/migrations/`, including the append-only
-   triggers.
-7. `npm run db:seed` -- loads the high-confidence units/sections/lubricants structural data.
-8. Review `db/seed/tasks_reference.json` against the source PDFs (two rows per unit are flagged
+6. `npm run db:seed` -- loads the high-confidence units/sections/lubricants structural data.
+7. Review `db/seed/tasks_reference.json` against the source PDFs (two rows per unit are flagged
    `_flag` for possible accidental duplication), then `npm run db:import-tasks`.
-9. Set `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD` / `SUPER_ADMIN_FULL_NAME` in `.env.local`,
+8. Set `SUPER_ADMIN_USERNAME` / `SUPER_ADMIN_PASSWORD` / `SUPER_ADMIN_FULL_NAME` in `.env.local`,
    run `npm run db:create-super-admin`, then unset them again.
-10. `npm run dev`, log in as the account you just created.
-11. Point something at `POST /api/cron/evaluate-alerts` (header
+9. `npm run dev`, log in as the account you just created.
+10. Point something at `GET` or `POST /api/cron/evaluate-alerts` (header
     `Authorization: Bearer <CRON_SECRET>`) on an hourly schedule -- e.g. a Windows Task Scheduler
-    job running `curl` -- so due-soon/overdue/critical alerts actually get generated. Without
-    this, only the instant "Not Working" alert path works.
+    job running `curl`, or Vercel Cron once deployed (see §8) -- so due-soon/overdue/critical
+    alerts actually get generated. Without this, only the instant "Not Working" alert path works.
 
 ## 8. Deploying
 
-Two things about the current local setup are host-specific and need a decision before deploying
-anywhere:
+The two things that used to block deploying off this machine are both resolved: file storage is
+Supabase Storage (not local disk), and the alert sweep responds to `GET` (not just `POST`) so
+Vercel Cron can trigger it directly. To deploy to Vercel:
 
-- **File storage** (`uploads/`, `src/lib/storage/local.ts`) needs a persistent volume on
-  whatever host you pick -- it will not survive a redeploy on a stateless host (e.g. Vercel's
-  default filesystem). Either provision a persistent disk, or swap `src/lib/storage/local.ts` and
-  `src/app/api/files/...` for an object-storage backend (S3/R2/MinIO) if the target host doesn't
-  offer one.
-- **The alert sweep** (`POST /api/cron/evaluate-alerts`) needs an external scheduler pointed at
-  it, same as locally -- Vercel Cron, GitHub Actions on a schedule, or your host's equivalent.
+1. Import the GitHub repo into Vercel (Next.js is auto-detected, no build config needed).
+2. Set the same env vars as `.env.local` (§7) in the Vercel project settings: `DATABASE_URL`,
+   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SESSION_SECRET`, `CRON_SECRET`.
+3. `vercel.json` already defines an hourly cron hitting `/api/cron/evaluate-alerts` -- **hourly
+   cron schedules require Vercel's Pro plan**; on the free Hobby tier, cron jobs can only run
+   once a day, so change the schedule to something like `0 3 * * *` if you're on Hobby.
+4. Deploy. Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on cron-triggered
+   requests when `CRON_SECRET` is set as an env var, matching what the route already expects --
+   no extra wiring needed.
 
-Everything else (MySQL connection via `DATABASE_URL`, session cookies, auth) is already
-host-agnostic.
+Any other Node-capable host (a VPS, Railway, Render, Fly.io) works too, since nothing left in the
+app depends on the local filesystem or a specific host's cron mechanism -- just run
+`GET /api/cron/evaluate-alerts` on a schedule via whatever that host offers (plain cron, GitHub
+Actions, etc.).
 
 ## 9. What's left
 
-- Structured feature-by-feature testing against the live local database
-- Decide on a deployment target and resolve the two items in §8 for it
+- Structured feature-by-feature testing against the live Supabase database
+- Schedule the alert-sweep cron on whatever host you land on (see §8)
 - Remove test/sample data before go-live
 - Generate the PDF test report as proof of QA

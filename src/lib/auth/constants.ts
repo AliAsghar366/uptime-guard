@@ -1,3 +1,3 @@
-// Split out from session.ts so src/middleware.ts (Edge runtime) can reference the cookie name
-// without pulling in session.ts's mysql2/next-headers imports, neither of which work on Edge.
+// Split out from session.ts so src/proxy.ts can reference the cookie name without pulling in
+// session.ts's postgres/next-headers imports.
 export const SESSION_COOKIE_NAME = "session";

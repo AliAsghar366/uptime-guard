@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Siren } from "lucide-react";
 import { getMachineProfile } from "@/lib/data/machine-profile";
 import { getCurrentProfile, canManageMachines } from "@/lib/auth/current-profile";
-import { fileUrl } from "@/lib/storage/local";
+import { fileUrl } from "@/lib/storage/supabase";
 import { EventAnnotationForm } from "@/components/event-annotation-form";
 import { ReferencePhotoThumb } from "@/components/reference-photo-thumb";
 

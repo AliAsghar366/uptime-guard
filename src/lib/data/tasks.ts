@@ -3,7 +3,7 @@ import { db } from "@/lib/db/client";
 import { alertSettings, lubricants, sections, taskCurrentState, tasks, units, type TaskStatus } from "@/lib/db/schema";
 import { getCurrentProfile } from "@/lib/auth/current-profile";
 import { scopedUnitIds } from "@/lib/auth/authorize";
-import { fileUrl } from "@/lib/storage/local";
+import { fileUrl } from "@/lib/storage/supabase";
 
 export interface TaskWithStatus {
   id: string;

@@ -7,7 +7,7 @@ import { getCurrentProfile } from "@/lib/auth/current-profile";
 import { assertCanAnnotate, AuthorizationError } from "@/lib/auth/authorize";
 import { recordStatusEvent } from "@/lib/services/status-events";
 import { logActivity } from "@/lib/services/activity-log";
-import { isAcceptableImage, saveUploadedPhoto } from "@/lib/storage/local";
+import { isAcceptableImage, saveUploadedPhoto } from "@/lib/storage/supabase";
 
 export type ActionState = { error: string | null; success?: boolean };
 

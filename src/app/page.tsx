@@ -16,7 +16,12 @@ const DEMO_ACCOUNTS: { label: string; username: string; password: string }[] = [
   { label: "Operator (Sharjeel, BF)", username: "sharjeel.bf", password: "2pbAOFgza05C" },
 ];
 
-const quickLogin = login.bind(null, initialState);
+// login returns LoginState (for useActionState's error display on the main form), but a plain
+// form action must return void|Promise<void> -- these quick-login forms never render an error
+// (a bad demo credential would mean a bug in this file, not user input), so discard it here.
+const quickLogin = async (formData: FormData) => {
+  await login(initialState, formData);
+};
 
 export default function LoginPage() {
   const [state, formAction, isPending] = useActionState(login, initialState);

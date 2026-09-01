@@ -1,15 +1,15 @@
 import { config } from "dotenv";
-import { drizzle } from "drizzle-orm/mysql2";
-import { migrate } from "drizzle-orm/mysql2/migrator";
-import mysql from "mysql2/promise";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import postgres from "postgres";
 
 config({ path: ".env.local" });
 
 async function main() {
-  const connection = await mysql.createConnection(process.env.DATABASE_URL!);
-  const db = drizzle(connection, { mode: "default" });
-  await migrate(db, { migrationsFolder: "./db/migrations" });
-  await connection.end();
+  const client = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false });
+  const db = drizzle(client);
+  await migrate(db, { migrationsFolder: "./db/migrations/supabase" });
+  await client.end();
   console.log("Migrations applied.");
 }
 

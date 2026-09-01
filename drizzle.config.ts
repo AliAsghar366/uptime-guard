@@ -8,9 +8,9 @@ if (!process.env.DATABASE_URL) {
 }
 
 export default defineConfig({
-  dialect: "mysql",
+  dialect: "postgresql",
   schema: "./src/lib/db/schema.ts",
-  out: "./db/migrations",
+  out: "./db/migrations/supabase",
   dbCredentials: { url: process.env.DATABASE_URL },
   verbose: true,
   strict: true,

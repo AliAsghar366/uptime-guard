@@ -2,20 +2,20 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
-  datetime,
-  float,
   index,
-  int,
-  json,
-  mysqlEnum,
-  mysqlTable,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  real,
   text,
+  timestamp,
   uniqueIndex,
   varchar,
-} from "drizzle-orm/mysql-core";
+} from "drizzle-orm/pg-core";
 
 const id = (name = "id") => varchar(name, { length: 36 }).primaryKey().$defaultFn(() => crypto.randomUUID());
-const createdAt = (name = "created_at") => datetime(name, { mode: "date" }).notNull().default(sql`CURRENT_TIMESTAMP`);
+const createdAt = (name = "created_at") => timestamp(name, { mode: "date" }).notNull().default(sql`CURRENT_TIMESTAMP`);
 
 export const USER_ROLES = ["super_admin", "production_engineer", "admin", "operator"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
@@ -26,17 +26,21 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 export const ALERT_TYPES = ["due_soon", "overdue", "critical", "not_working"] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
+export const userRoleEnum = pgEnum("user_role", USER_ROLES);
+export const taskStatusEnum = pgEnum("task_status", TASK_STATUSES);
+export const alertTypeEnum = pgEnum("alert_type", ALERT_TYPES);
+
 // --- Equipment hierarchy -----------------------------------------------------------------
 
-export const units = mysqlTable("units", {
+export const units = pgTable("units", {
   id: id(),
   code: varchar("code", { length: 32 }).notNull().unique(),
   name: varchar("name", { length: 255 }).notNull(),
   createdAt: createdAt(),
-  archivedAt: datetime("archived_at", { mode: "date" }),
+  archivedAt: timestamp("archived_at", { mode: "date" }),
 });
 
-export const sections = mysqlTable(
+export const sections = pgTable(
   "sections",
   {
     id: id(),
@@ -44,7 +48,7 @@ export const sections = mysqlTable(
     code: varchar("code", { length: 64 }).notNull(),
     name: varchar("name", { length: 255 }),
     createdAt: createdAt(),
-    archivedAt: datetime("archived_at", { mode: "date" }),
+    archivedAt: timestamp("archived_at", { mode: "date" }),
   },
   (t) => [
     uniqueIndex("sections_unit_code_unique").on(t.unitId, t.code),
@@ -52,28 +56,28 @@ export const sections = mysqlTable(
   ]
 );
 
-export const lubricants = mysqlTable("lubricants", {
+export const lubricants = pgTable("lubricants", {
   id: id(),
   name: varchar("name", { length: 255 }).notNull().unique(),
 });
 
-export const tasks = mysqlTable(
+export const tasks = pgTable(
   "tasks",
   {
     id: id(),
     sectionId: varchar("section_id", { length: 36 }).notNull().references(() => sections.id),
     description: text("description").notNull(),
     pictureUrl: varchar("picture_url", { length: 512 }),
-    noOfPoints: int("no_of_points").notNull().default(1),
-    lubricationPoints: int("lubrication_points").notNull().default(1),
+    noOfPoints: integer("no_of_points").notNull().default(1),
+    lubricationPoints: integer("lubrication_points").notNull().default(1),
     frequencyLabel: varchar("frequency_label", { length: 32 }).notNull(),
-    frequencyDays: int("frequency_days").notNull(),
+    frequencyDays: integer("frequency_days").notNull(),
     lubricantId: varchar("lubricant_id", { length: 36 }).references(() => lubricants.id),
     createdAt: createdAt(),
-    archivedAt: datetime("archived_at", { mode: "date" }),
+    archivedAt: timestamp("archived_at", { mode: "date" }),
     isCritical: boolean("is_critical").notNull().default(false),
-    pictureMarkerX: float("picture_marker_x"),
-    pictureMarkerY: float("picture_marker_y"),
+    pictureMarkerX: real("picture_marker_x"),
+    pictureMarkerY: real("picture_marker_y"),
   },
   (t) => [
     index("idx_tasks_section").on(t.sectionId),
@@ -84,11 +88,11 @@ export const tasks = mysqlTable(
 
 // --- Users, auth, unit assignments -------------------------------------------------------
 
-export const users = mysqlTable("users", {
+export const users = pgTable("users", {
   id: id(),
   username: varchar("username", { length: 64 }).notNull().unique(),
   fullName: varchar("full_name", { length: 255 }).notNull(),
-  role: mysqlEnum("role", USER_ROLES).notNull(),
+  role: userRoleEnum("role").notNull(),
   passwordHash: varchar("password_hash", { length: 255 }).notNull(),
   createdAt: createdAt(),
   createdBy: varchar("created_by", { length: 36 }),
@@ -96,14 +100,14 @@ export const users = mysqlTable("users", {
 
 // Opaque session tokens: the cookie holds the raw token, only its SHA-256 hash is stored here,
 // so a DB read/leak alone can't be replayed as a valid session.
-export const sessions = mysqlTable("sessions", {
+export const sessions = pgTable("sessions", {
   tokenHash: varchar("token_hash", { length: 64 }).primaryKey(),
   userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: createdAt(),
-  expiresAt: datetime("expires_at", { mode: "date" }).notNull(),
+  expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
 });
 
-export const userUnitAssignments = mysqlTable(
+export const userUnitAssignments = pgTable(
   "user_unit_assignments",
   {
     id: id(),
@@ -111,7 +115,7 @@ export const userUnitAssignments = mysqlTable(
     unitId: varchar("unit_id", { length: 36 }).notNull().references(() => units.id),
     assignedBy: varchar("assigned_by", { length: 36 }).references(() => users.id),
     createdAt: createdAt(),
-    revokedAt: datetime("revoked_at", { mode: "date" }),
+    revokedAt: timestamp("revoked_at", { mode: "date" }),
   },
   (t) => [
     uniqueIndex("assignments_user_unit_unique").on(t.userId, t.unitId),
@@ -123,14 +127,14 @@ export const userUnitAssignments = mysqlTable(
 // --- Status history, current-state cache, alerts ------------------------------------------
 
 // Append-only: no service-layer function ever updates/deletes a row here, and a DB trigger
-// (see db/migrations, added after drizzle-kit generate) rejects UPDATE/DELETE outright as a
-// hard backstop -- this table is the permanent audit trail of every check-off, ever.
-export const taskStatusEvents = mysqlTable(
+// (see db/migrations/supabase/0001_append_only_triggers.sql) rejects UPDATE/DELETE outright as
+// a hard backstop -- this table is the permanent audit trail of every check-off, ever.
+export const taskStatusEvents = pgTable(
   "task_status_events",
   {
     id: id(),
     taskId: varchar("task_id", { length: 36 }).notNull().references(() => tasks.id),
-    status: mysqlEnum("status", TASK_STATUSES).notNull(),
+    status: taskStatusEnum("status").notNull(),
     comment: text("comment"),
     photoUrl: varchar("photo_url", { length: 512 }),
     recordedBy: varchar("recorded_by", { length: 36 }).notNull().references(() => users.id),
@@ -140,7 +144,7 @@ export const taskStatusEvents = mysqlTable(
 );
 
 // Append-only, same guarantee as task_status_events.
-export const eventAnnotations = mysqlTable(
+export const eventAnnotations = pgTable(
   "event_annotations",
   {
     id: id(),
@@ -155,35 +159,35 @@ export const eventAnnotations = mysqlTable(
 // Denormalized read-model, 1:1 with tasks. Only ever written by
 // src/lib/services/status-events.ts inside the same transaction as the event insert -- never
 // exposed as a direct client write.
-export const taskCurrentState = mysqlTable("task_current_state", {
+export const taskCurrentState = pgTable("task_current_state", {
   taskId: varchar("task_id", { length: 36 }).primaryKey().references(() => tasks.id),
-  status: mysqlEnum("status", TASK_STATUSES).notNull().default("working"),
+  status: taskStatusEnum("status").notNull().default("working"),
   lastEventId: varchar("last_event_id", { length: 36 }).references(() => taskStatusEvents.id),
-  lastChangedAt: datetime("last_changed_at", { mode: "date" }),
-  nextDueAt: datetime("next_due_at", { mode: "date" }),
+  lastChangedAt: timestamp("last_changed_at", { mode: "date" }),
+  nextDueAt: timestamp("next_due_at", { mode: "date" }),
   updatedAt: createdAt("updated_at"),
 });
 
-export const alertSettings = mysqlTable("alert_settings", {
+export const alertSettings = pgTable("alert_settings", {
   id: id(),
   // null = plant-wide default row; non-null = per-task override.
   taskId: varchar("task_id", { length: 36 }).unique().references(() => tasks.id),
-  leadTimeDays: int("lead_time_days").notNull().default(2),
-  escalationDays: int("escalation_days").notNull().default(2),
+  leadTimeDays: integer("lead_time_days").notNull().default(2),
+  escalationDays: integer("escalation_days").notNull().default(2),
   updatedBy: varchar("updated_by", { length: 36 }).references(() => users.id),
   updatedAt: createdAt("updated_at"),
 });
 
 // Read-only to clients; only src/lib/services writes here (status-events.ts for not_working,
 // alert-sweep.ts for due_soon/overdue/critical).
-export const alerts = mysqlTable(
+export const alerts = pgTable(
   "alerts",
   {
     id: id(),
     taskId: varchar("task_id", { length: 36 }).notNull().references(() => tasks.id),
-    type: mysqlEnum("type", ALERT_TYPES).notNull(),
+    type: alertTypeEnum("type").notNull(),
     triggeredAt: createdAt("triggered_at"),
-    resolvedAt: datetime("resolved_at", { mode: "date" }),
+    resolvedAt: timestamp("resolved_at", { mode: "date" }),
     acknowledgedBy: varchar("acknowledged_by", { length: 36 }).references(() => users.id),
   },
   (t) => [index("idx_alerts_task_resolved").on(t.taskId, t.resolvedAt)]
@@ -193,7 +197,7 @@ export const alerts = mysqlTable(
 
 // Append-only, written only by src/lib/services/activity-log.ts at each mutation call site.
 // Readable by super_admin/production_engineer only (enforced in src/lib/data, not here).
-export const activityLog = mysqlTable(
+export const activityLog = pgTable(
   "activity_log",
   {
     id: id(),
@@ -201,8 +205,8 @@ export const activityLog = mysqlTable(
     action: varchar("action", { length: 32 }).notNull(),
     tableName: varchar("table_name", { length: 64 }).notNull(),
     recordId: varchar("record_id", { length: 36 }).notNull(),
-    beforeData: json("before_data").$type<Record<string, unknown>>(),
-    afterData: json("after_data").$type<Record<string, unknown>>(),
+    beforeData: jsonb("before_data").$type<Record<string, unknown>>(),
+    afterData: jsonb("after_data").$type<Record<string, unknown>>(),
     createdAt: createdAt(),
   },
   (t) => [

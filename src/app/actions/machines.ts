@@ -13,7 +13,7 @@ import {
   AuthorizationError,
 } from "@/lib/auth/authorize";
 import { logActivity } from "@/lib/services/activity-log";
-import { isAcceptableImage, saveUploadedPhoto } from "@/lib/storage/local";
+import { isAcceptableImage, saveUploadedPhoto } from "@/lib/storage/supabase";
 
 const FREQUENCY_DAYS: Record<string, number> = {
   Weekly: 7,

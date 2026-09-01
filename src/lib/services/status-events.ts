@@ -58,7 +58,8 @@ export async function recordStatusEvent(actor: CurrentProfile, input: RecordStat
         nextDueAt,
         updatedAt: now,
       })
-      .onDuplicateKeyUpdate({
+      .onConflictDoUpdate({
+        target: taskCurrentState.taskId,
         set: { status: input.status, lastEventId: eventId, lastChangedAt: now, nextDueAt, updatedAt: now },
       });
 
