@@ -7,3 +7,10 @@
   # Scheduled Functions (netlify/functions/alert-sweep.mts) live alongside the Next.js app but
   # build separately -- point Netlify at that directory explicitly.
   directory = "netlify/functions"
+
+[build.environment]
+  # Next.js's Turbopack build cache (.next/cache/**) can end up with SESSION_SECRET/CRON_SECRET
+  # values embedded in its intermediate cache blobs -- that's cache-internal data, never part of
+  # the actual served output or client bundle, so it's safe to exclude from Netlify's secrets
+  # scan. Narrowly scoped to the cache dir only -- everything else still gets scanned normally.
+  SECRETS_SCAN_OMIT_PATHS = "**/.next/cache/**"
